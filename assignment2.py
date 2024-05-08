@@ -46,7 +46,7 @@ print(df[['V', 'V.1']].loc[741])
 #%%
 print(df[['Nb', 'Nb.1']].loc[738:739])
 
-# I would suggest excluding rows 738 and 739 altogether.
+# Exclude rows 738 and 739 altogether.
 
 #%%
 """
@@ -266,64 +266,259 @@ del el
 df_el = df_el.dropna(axis='index')
 df_el = df_el.astype('float')
 
+
 #%%
 """
-Data exploration for model selection
+Data splitting:
+
+Yield strength
+"""
+n = len(df_ys.columns)
+X_ys = df_ys[df_ys.columns[0:n-1]]
+y_ys = df_ys[df_ys.columns[-1]]
+
+"""
+Ultimate tensile strength
+"""
+
+X_uts1 = df_uts[df_uts.columns[0:n-1]]
+y_uts1 = df_uts[df_uts.columns[-1]]
+X_uts2 = df_uts2[df_uts2.columns[0:n-1]]
+y_uts2 = df_uts2[df_uts2.columns[-1]]
+
+uts_data = {'uts1': [X_uts1, y_uts1],
+            'uts2': [X_uts2, y_uts2]}
+
+"""
+Elongation length
+"""
+
+X_el = df_el[df_el.columns[0:n-1]]
+y_el = df_el[df_el.columns[-1]]
+
+
+#%%
+
+"""
+Model selection 
+"""
+
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.ensemble import AdaBoostRegressor
+from sklearn.svm import SVR
+
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import cross_val_score
+
+X = [X_ys, X_uts1, X_el]
+y = [y_ys, y_uts1, y_el]
+
+models = [
+    RandomForestRegressor(),
+    GradientBoostingRegressor(),
+    GaussianProcessRegressor(),
+    AdaBoostRegressor(),
+    SVR()]
+
+names = [
+    'Random Forest',
+    'Gradient Boosting',
+    'Gaussian Process',
+    'Ada Boost',
+    'Support Vector Regression']
+
+res_full_split = {}
+for i, model in enumerate(models):
+    scores = []
+    for j in range(len(X)):
+        
+        X_train, X_test, y_train, y_test = train_test_split(X[j], y[j], test_size=0.33)
+        model.fit(X_train, y_train)
+        r2 = r2_score(y_test, model.predict(X_test))
+        scores.append(r2)
+        #mse = mean_squared_error(y_test, model.predict(X_test))
+        #scores.append([round(r2, 5), round(mse, 5)])
+        
+    res_full_split.update({names[i]: scores})
+ 
+    
+res_full_cross = {}
+for i, model in enumerate(models):
+    scores = []
+    for j in range(len(X)):
+        scores.append(np.mean(cross_val_score(model, X[j], y[j])))
+    res_full_cross.update({names[i]: scores})
+
+
+#%%
+"""
+Models trained with PCA
+"""
+X_pca = []
+for j in range(len(X)):
+    scaler = StandardScaler()
+    #X_scaled = scaler.fit_transform(X[j])
+    pca = PCA(n_components=0.5)
+    #X_scaled = pca.fit_transform(X_scaled)
+    #print(X_scaled.shape[1])
+    #X_pca.append(X_scaled)
+
+#%%
+from sklearn.pipeline import Pipeline
+
+scaler = StandardScaler()
+pca = PCA(n_components=0.5)
+
+res_scaled_split = {}
+for i, model in enumerate(models):
+    scores = []
+    for j in range(len(X)):
+        X_train, X_test, y_train, y_test = train_test_split(X[j], y[j], test_size=0.33)
+        pipe = Pipeline([
+            ('scaler', scaler), 
+            ('pca', pca), 
+            ('model', model)])
+        pipe.fit(X_train, y_train)
+        
+        r2 = r2_score(y_test, pipe.predict(X_test))
+        scores.append(r2)
+        #mse = mean_squared_error(y_test, model.predict(X_test))
+        #scores.append([round(r2, 5), round(mse, 5)])
+        
+    res_scaled_split.update({names[i]: scores})
+        
+
+res_scaled_cross = {}
+for i, model in enumerate(models):
+    scores = []
+    for j in range(len(X_pca)):
+        pipe = Pipeline([
+            ('scaler', scaler), 
+            ('pca', pca), 
+            ('model', model)])
+        scores.append(np.mean(cross_val_score(pipe, X[j], y[j])))
+        
+    res_scaled_cross.update({names[i]: scores})
+
+        
+#%%
+
+print('Scores with full data and train-test split:')
+print(res_full_split)
+print()
+print('Scores with full data and cross validation:')
+print(res_full_cross)
+print()
+print('Scores with scaling and PCA, test-train split:')
+print(res_scaled_split)
+print()
+print('Scores with scaling and PCA, cross validation:')
+print(res_scaled_cross)
+
+#%%
+"""
+Save scores in a DataFrame and get best scores and models for each dataset
+"""
+scores = [res_full_split, res_full_cross, res_scaled_split, res_scaled_cross]
+scores_df = pd.DataFrame(res_full_split).T
+scores_df.columns = ['YS', 'UTS', 'EL']
+scores_df = scores_df.rename_axis('Model').reset_index()
+scores_df['Type'] = np.ones(scores_df.shape[0])
+for i in range(1, len(scores)):
+    df_temp = pd.DataFrame(scores[i]).T
+    df_temp.columns = ['YS', 'UTS', 'EL']
+    df_temp = df_temp.rename_axis('Model').reset_index()
+    df_temp['Type'] = np.ones(df_temp.shape[0])+i
+    print(df_temp)
+    scores_df = pd.concat([scores_df, df_temp], ignore_index=True)
+
+#%%
+print(scores_df)
+
+#%%
+
+print(scores_df.loc[np.argmax(scores_df['YS'])])
+print(scores_df.loc[np.argmax(scores_df['UTS'])])
+print(scores_df.loc[np.argmax(scores_df['EL'])])
+
+"""
+We see that the best test scores are found on a simple test-train split. Random Forest Regressor works fairly well on all datasets.
+"""
+    
+#%% 
+"""
+Feature extraction test with Random Forest
+"""
+important_features = {}
+feature_values = []
+feature_sorted_idx = []
+#feature_importance = []
+data_names = ['X_ys', 'X_uts', 'X_el']
+
+for i, x in enumerate(X):
+    X_train, X_test, y_train, y_test = train_test_split(x, y[i], test_size=0.33)
+    reg = RandomForestRegressor()
+    reg.fit(X_train, y_train)
+    feature_importance = reg.feature_importances_
+    sorted_idx = np.argsort(feature_importance)
+    
+    feature_sorted_idx.append(sorted_idx)
+    feature_values.append(feature_importance)
+    important_features.update({data_names[i]:np.array(df_ys.columns)[sorted_idx]})
+    
+    
+#%%
+"""
+Visualize feature importance based on Random Forest
 """
 import matplotlib.pyplot as plt
-
-#plt.hist(df_elem[df.columns[4]], 50)
-plt.boxplot(df_elem[df.columns[7]])
+obj_names = ['YS', 'UTS', 'EL']
+dfs = [df_ys, df_uts, df_el]
+#print(important_features)
+fig = plt.figure()
+plt.subplot(1, 2, 1)
+for i in range(len(dfs)):
+    pos = np.arange(feature_sorted_idx[i].shape[0]) + 0.5
+    plt.subplot(1,3,i+1)
+    plt.barh(pos, feature_values[i][feature_sorted_idx[i]], align="center")
+    plt.yticks(pos, np.array(df_ys.columns)[feature_sorted_idx[i]])
+    plt.title(f"Feature Importance ({obj_names[i]})")
+fig.tight_layout()
+plt.show()
 
 
 #%%
 """
-Model selection
+Hyperparameter tuning
 
-Our data is structured, but we only have a limited amount of it. Random forest regressor is robust with high dimensional data and using it doesn't require scalarization or normalisation. 
-"""
 
-"""
 Yield strength
 """
 
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
-
-n = len(df_ys.columns)
-X = df_ys[df_ys.columns[0:n]]
-y_ys = df_ys[df_ys.columns[-1]]
-X_train, X_test, y_train, y_test = train_test_split(X, y_ys, test_size=0.33)
-ys_regr = RandomForestRegressor(max_depth=5, random_state=0)
-ys_regr.fit(X_train, y_train)
-
-#%%
-from sklearn.metrics import r2_score
-
-y_ys_pred = ys_regr.predict(X_test)
-r2 = r2_score(y_test, y_ys_pred)
-
-#%%
-from sklearn.model_selection import cross_val_score
-
-print(f'R2: {r2}')
-print(f'K-Fold: {np.mean(cross_val_score(ys_regr, X, y_ys))}')
-
-#%%
 from sklearn.model_selection import GridSearchCV
 
 param_grid = {'n_estimators': [5, 10, 20, 50, 100],
               'max_depth': [None, 2, 5, 10, 20]}
 ys_regr = RandomForestRegressor()
+
+# Use 5-fold cross validation for each combination of parameters
 clf = GridSearchCV(
         estimator=ys_regr,
         param_grid=param_grid,
-        return_train_score=True).fit(X, y_ys)
+        return_train_score=True).fit(X_ys, y_ys)
 
 #%%
 clf_results = clf.cv_results_
-top_param = np.argmax(clf_results['mean_test_score'])
-print(clf_results['params'][top_param])
+top_param_index = np.argmax(clf_results['mean_test_score'])
+top_param_ys = clf_results['params'][top_param_index]
+print(f'Best parameters for yield strength: {top_param_ys}')
 
 #%%
 """
@@ -331,9 +526,9 @@ Ultimate tensile strength
 """
 from sklearn.gaussian_process import GaussianProcessRegressor
 
-X_uts1 = df_uts[df_uts.columns[0:n]]
+X_uts1 = df_uts[df_uts.columns[0:n-1]]
 y_uts1 = df_uts[df_uts.columns[-1]]
-X_uts2 = df_uts2[df_uts2.columns[0:n]]
+X_uts2 = df_uts2[df_uts2.columns[0:n-1]]
 y_uts2 = df_uts2[df_uts2.columns[-1]]
 
 uts_data = {'uts1': [X_uts1, y_uts1],
@@ -352,26 +547,164 @@ for name, data in uts_data.items():
     
 # Bad results
 
-#%%
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-scaler = StandardScaler()
-X_uts_scaled = scaler.fit_transform(X_uts1)
-pca = PCA(n_components=3)
-X_uts_scaled = pca.fit_transform(X_uts_scaled)
+"""
+Based on these results Gaussian process is not suitable for this data even with the PCA dimension reduction.
+"""
 
 #%%
-print(pca.get_feature_names_out(X_uts_scaled.columns))
+"""
+UTS with Ada Boost regressor
+"""
+from sklearn.ensemble import AdaBoostRegressor
+param_grid={'n_estimators': [10, 20, 50, 70, 100],
+            'loss': ['linear', 'square', 'exponential'],
+            'learning_rate': [1.0, 3.0, 5.0]}
+uts_regr = AdaBoostRegressor(RandomForestRegressor())
+clf3 = GridSearchCV(
+    estimator=uts_regr, 
+    param_grid=param_grid,
+    return_train_score=True).fit(X_uts1, y_uts1)
+clf3_res = clf3.cv_results_
+
+
 #%%
-clf2 = GridSearchCV(
+"""
+UTS with RF
+"""
+
+param_grid = {'n_estimators': [5, 10, 20, 50, 100],
+              'max_depth': [None, 2, 5, 10, 20]}
+uts_regr = RandomForestRegressor()
+
+clf4 = GridSearchCV(
     estimator=uts_regr, 
     param_grid=param_grid, 
-    return_train_score=True).fit(X_uts_scaled, y_uts1)
-clf2_res = clf2.cv_results_
+    return_train_score=True).fit(X_uts1, y_uts1)
 
+#%%
+
+clf4_results = clf4.cv_results_
+top_param_index = np.argmax(clf4_results['mean_test_score'])
+top_param_uts = clf4_results['params'][top_param_index]
+print(f'Best parameters for ultimate tensile strength: {top_param_uts}')
+
+
+#%%
 """
-Based on these results Gaussian process is not suitable for this data even with PCA dimension reduction
+EL with Random Forest
 """
+
+#param_grid = {'learning_rate': [0.05, 0.1, 0.15],
+#              'n_estimators': [50, 100, 150, 200],
+#              'max_depth': [None, 3, 5, 10],
+#              'max_features': [5, 10, 15, 19]}
+
+#el_regr = GradientBoostingRegressor()
+
+el_regr = RandomForestRegressor()
+pipe = Pipeline([
+    ('scaler', scaler), 
+    ('pca', pca), 
+    ('model', el_regr)])
+
+param_grid = {'model__n_estimators': [5, 10, 20, 50, 100],
+              'model__max_depth': [None, 2, 5, 10, 20]}
+
+clf5 = GridSearchCV(
+    estimator=pipe, 
+    param_grid=param_grid, 
+    return_train_score=True).fit(X_el, y_el)
+
+#%%
+
+clf5_results = clf5.cv_results_
+top_param_index = np.argmax(clf5_results['mean_test_score'])
+top_param_el = clf5_results['params'][top_param_index]
+print(f'Best parameters for elongation-%: {top_param_el}')
+
+
+#%%
+"""
+Model optimization
+"""
+from scipy.optimize import minimize
+
+model_ys = RandomForestRegressor(
+    max_depth=top_param_ys['max_depth'], 
+    n_estimators=top_param_ys['n_estimators'])
+model_ys.fit(X_ys.values, y_ys.values)
+
+model_uts = RandomForestRegressor(
+    max_depth=top_param_uts['max_depth'], 
+    n_estimators=top_param_uts['n_estimators'])
+model_uts.fit(X_uts1.values, y_uts1.values)
+
+model_el = RandomForestRegressor(
+    max_depth=top_param_el['model__max_depth'], 
+    n_estimators=top_param_el['model__n_estimators'])
+model_uts.fit(X_el.values, y_el.values)
+
+
+#model_el = GradientBoostingRegressor(
+#    max_depth=top_param_el['max_depth'], 
+#    n_estimators=top_param_el['n_estimators'],
+#    learning_rate=top_param_el['learning_rate'],
+#    max_features=top_param_el['max_features'])
+model_el.fit(X_el.values, y_el.values)
+
+#%%
+import itertools
+
+def metallurgical_problem(x):
+    ys_pred = -1 * model_ys.predict([x])
+    uts_pred = -1 * model_uts.predict([x])
+    el_pred = -1 * model_el.predict([x])
+    
+    return np.concatenate([ys_pred, uts_pred, el_pred]).tolist()
+
+def reference_point_method(f, start, z: np.ndarray):
+    rho = 0.00001
+    w = np.array([1.5, 1, 2.5])
+    bounds = itertools.repeat((0, np.Inf), X_ys.shape[1])
+    
+    # Optimization problem scalarized with a reference point
+    obj = lambda x : max(w*f(x)-z) + rho * sum(w * f(x) - z)
+    print(obj)
+    #const = ({'type': 'ineq', 'fun': lambda x:  0.96-0.96/(1.09-x**2)})
+    sol = minimize(obj, start, method='SLSQP', bounds=bounds)
+        #,constraints=const) #, options={'disp':True})
+    return sol
+
+#%%
+
+x0 = np.ones(X_ys.shape[1])*0.01
+#x0 = np.zeros(X_ys.shape[1])
+z = np.array([-100, -100, -100])
+res = reference_point_method(metallurgical_problem, x0, z)
+
+print(f'Solution: {res.x}')
+obj_values = [-1*round(o, 3) for o in metallurgical_problem(res.x)]
+print(obj_values)
+
+#%%
+###############################################################
+# These are for testing that the functions work as intended
+w = np.array([2, 2, 2])
+print([r for r in metallurgical_problem(x0)])
+x0 = np.ones(X_ys.shape[1])*0.5
+print(max(w*metallurgical_problem(x0)-z) + 0.00001 * sum(w * metallurgical_problem(x0) - z))
+
+print(-model_uts.predict([np.ones(X_ys.shape[1])*0.02]))
+print(-model_el.predict([np.ones(X_ys.shape[1])*0.03]))
+
+
+
+
+
+
+
+
+
 
 
 
