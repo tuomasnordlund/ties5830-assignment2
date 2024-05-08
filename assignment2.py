@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 #%% Load the data
-df_raw = pd.read_excel("C:/Users/Omistaja/Documents/TIES5830/metalapplication.xls", header=1)
+df_raw = pd.read_excel("metalapplication.xls", header=1)
 df = df_raw.copy()
 
 #%% Inspect the data
